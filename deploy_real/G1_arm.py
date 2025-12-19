@@ -1,15 +1,41 @@
-﻿import time
+import os
+import time
 import numpy as np
 import pinocchio as pin
 from scipy.spatial.transform import Rotation
 from g1_arm_IK import G1_29_ArmIK
 
-ik = G1_29_ArmIK(Unit_Test=True, Visualization=True)
+ik = G1_29_ArmIK(Unit_Test=False, Visualization=False)
 
 # q_current = get_current_arm_joints_from_robot()
 q_current = np.zeros(ik.reduced_robot.model.nq)
 
 moving1 = np.array([[0.20, 0, 0.10, 0], [-0.20, 0, -0.10, 0]])   # 20 cm forward, 10 cm upward, 45 degrees to the right
+
+
+# =========================
+# Recording (NPZ) settings
+# =========================
+RECORD = True
+RECORD_RATE_HZ = 50
+RECORD_DT = 1.0 / RECORD_RATE_HZ
+record_frames = []
+
+def pack_frame(ik, q):
+    """
+    Frame format (compatible with g1_high_level_controller.py):
+      [ q | pL(3) | quatL(4) | pR(3) | quatR(4) ]
+    where quat is (x, y, z, w) from scipy Rotation.as_quat().
+    """
+    L_SE3, R_SE3 = ik.forward_kinematics(q)
+
+    pL = L_SE3.translation
+    pR = R_SE3.translation
+
+    quatL = Rotation.from_matrix(L_SE3.rotation).as_quat()
+    quatR = Rotation.from_matrix(R_SE3.rotation).as_quat()
+
+    return np.hstack([q, pL, quatL, pR, quatR])
 
 
 def steering_twist(theta_deg, radius=0.20):
@@ -82,6 +108,12 @@ def move_rod(ik, q_current, moving, n_steps = 100, rate_hz = 25):
             current_lr_arm_motor_q=q_current
         )
 
+
+        # ===== Recording: store one frame per solved step =====
+        if RECORD:
+            record_frames.append(pack_frame(ik, q_sol))
+
+
         # send_to_robot(q_sol)
 
         q_current = q_sol
@@ -91,9 +123,43 @@ def move_rod(ik, q_current, moving, n_steps = 100, rate_hz = 25):
     return q_current
 
 
+def save_recording_npz(
+    frames,
+    out_path="records/sim_rod_twist.npz",
+    dt=RECORD_DT,
+    note="cols=[q | pL(3) | quatL(4) | pR(3) | quatR(4)]"
+):
+    if len(frames) == 0:
+        print("[INFO] No frames recorded; nothing to save.")
+        return
 
-while True:
-    q_current = np.zeros(ik.reduced_robot.model.nq)
-    q_current = move_rod(ik, q_current, np.array([0.10, 0, 0.10, -15]), rate_hz = 50)
-    q_current = move_rod(ik, q_current, np.array([-0.10, 0, -0.10, 25]), rate_hz = 50)
-    q_current = move_rod(ik, q_current, np.array([0, 0, 0, -10]), rate_hz = 50)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    traj = np.vstack(frames)
+
+    np.savez_compressed(
+        out_path,
+        traj=traj,
+        dt=dt,
+        note=note
+    )
+
+    print(f"[INFO] Saved recording to {out_path}")
+    print(f"[INFO] traj shape = {traj.shape} (frames, dims)")
+
+
+if __name__ == "__main__":
+
+    # Add a function to make sure the initial position is at zero position if needed
+
+    for i in range(5):
+        q_current = np.zeros(ik.reduced_robot.model.nq)
+        q_current = move_rod(ik, q_current, np.array([0.10, 0, 0.10, -15]), rate_hz=RECORD_RATE_HZ)
+        q_current = move_rod(ik, q_current, np.array([-0.10, 0, -0.10, 25]), rate_hz=RECORD_RATE_HZ)
+        q_current = move_rod(ik, q_current, np.array([0, 0, 0, -10]), rate_hz=RECORD_RATE_HZ)
+
+    if RECORD:
+        save_recording_npz(
+            record_frames,
+            out_path="records/sim_rod_twist.npz",
+            dt=RECORD_DT
+        )
