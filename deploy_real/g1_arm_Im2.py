@@ -97,7 +97,7 @@ def move_right_hand_6dof_hand_frame(
         R_target = R_SE3 * dT
 
         # 4) Keep left hand fixed (anchor)
-        L_target = L_SE3
+        L_target = L_SE3 * dT
 
         # 5) Solve IK
         q_sol, _ = ik.solve_ik(
@@ -277,4 +277,5 @@ if __name__ == "__main__":
             out_path="records/sim_6DoF.npz",
             dt=RECORD_DT
         )
+
 
